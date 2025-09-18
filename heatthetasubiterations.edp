@@ -1,0 +1,280 @@
+real theta = 1.0/2.0;
+//number of refinements
+int m=4, j;
+load "Element_P3"
+load "Element_P4"
+
+real solvetime=0.0, solvetimeimex=0.0, solvetimepart=0.0, cpu;
+
+
+//structures to keep track of errors and rates, etc.
+real[int] uep(m), u1ep(m), u2ep(m); 
+real[int] urp(m-1), u1rp(m-1), u2rp(m-1);
+
+//static problem parameters
+//domain corners
+real x0 = 0.0, x1 = 1.0, x2 = 1.0;
+real y0 = 0.0, y1 = 1.0, y2 = -1.0;
+//heat eqn parameters
+real nu1 = 1.0;
+real nu2 = 1.0;
+real kappa = 1000.0;
+real a = 1.0;
+real c1 = 1.0+nu1/kappa;
+real c2 = -1.0*nu1/nu2;
+real c3 = c2-c1;
+//stopping time
+real T = 1.0;
+//tolerance for subiterations
+real epsilon = 1.0e-6;
+
+//analytic solution functions
+func real u1true(real t) {return (a*(exp(-1.0*t))*x*(1.0-x)*(1.0-y)); }
+func real u1truet(real t) {return (-1.0*a*(exp(-1.0*t))*x*(1.0-x)*(1.0-y)); }
+func real u1truex(real t) {return (a*(exp(-1.0*t))*(1.0-2.0*x)*(1.0-y)); }
+func real u1truey(real t) {return (-1.0*a*(exp(-1.0*t))*x*(1.0-x)); }
+func real u1truexx(real t) {return (-2.0*a*(exp(-1.0*t))*(1.0-y)); }
+func real u1trueyy(real t) {return (0.0); }
+
+func real u2true(real t) {return ((exp(-1.0*t))*a*x*(1.0-x)*(c1+c2*y+c3*y^2)); }
+func real u2truet(real t) {return (-1.0*(exp(-1.0*t))*a*x*(1.0-x)*(c1+c2*y+c3*y^2)); }
+func real u2truex(real t) {return ((exp(-1.0*t))*a*(1.0-2.0*x)*(c1+c2*y+c3*y^2)); }
+func real u2truey(real t) {return ((exp(-1.0*t))*a*x*(1.0-x)*(c2+2*c3*y)); }
+func real u2truexx(real t) {return (-2.0*(exp(-1.0*t))*a*(c1+c2*y+c3*y^2)); }
+func real u2trueyy(real t) {return ((exp(-1.0*t))*a*x*(1.0-x)*(2*c3)); }
+
+//RHS functions that force the analytic solutions
+func real f1(real t) {return (u1truet(t)-nu1*(u1truexx(t)+u1trueyy(t)));}
+func real f2(real t) {return (u2truet(t)-nu2*(u2truexx(t)+u2trueyy(t)));}				
+
+//outermost loop (each loop is for a particular mesh size/time step combination)
+for(j=0;j<m;j++){
+  //mesh resolution	
+  int n=2^(j+1);
+  //timestep selection
+  int i, k, numsteps = n;
+  real tn, tnplus1, tnplustheta, dt = T/numsteps;
+  cout << "Computing approximations for the following parameters:"<< endl;
+  cout << "dt = " << dt << "  n = " << n << "  numsteps = " << numsteps << endl;
+  //domain specifications
+  //note that under this construction, the interface I has label 3 in Omega1
+  //and label 1 in Omega 2
+  mesh Omega1 = square(n,n,[x1+(x0-x1)*x,y1+(y0-y1)*y],flags=1);
+  mesh Omega2 = square(n,n,[x2+(x0-x2)*x,y0+(y2-y0)*y],flags=1);
+  //plot(Omega1,Omega2,wait=0);
+  
+  //finite element spaces
+  fespace X1(Omega1,P2);
+  fespace X2(Omega2,P2);
+  int nn = X1.ndof;
+
+  X1 v1, u1n, u1nplustheta,u1nplusthetakp1,u1nplusthetak,u1nminusthetam1,u1temp, u1nplus1;
+  X2 v2, u2n, u2nplustheta,u2nplusthetakp1,u2nplusthetak,u2nminusthetam1,u2temp, u2nplus1;
+
+  //partition variational forms for omega1 and omega2
+  varf a11part(u1nplusthetakp1,v1) = int2d(Omega1)((1.0/(theta*dt))*u1nplusthetakp1*v1)  
+    + int2d(Omega1)( nu1*(dx(u1nplusthetakp1)*dx(v1) + dy(u1nplusthetakp1)*dy(v1)) )  
+    + int1d(Omega1,3)((kappa)*u1nplusthetakp1*(v1)) 
+    + on(1,2,4,u1nplusthetakp1=0);
+
+  varf a22part(u2nplusthetakp1,v2) = int2d(Omega2)((1.0/(theta*dt))*u2nplusthetakp1*v2)
+    + int2d(Omega2)( nu2*(dx(u2nplusthetakp1)*dx(v2) + dy(u2nplusthetakp1)*dy(v2)) )  
+    + int1d(Omega2,1)((kappa)*u2nplusthetakp1*(v2)) 
+    + on(2,3,4,u2nplusthetakp1=0) ;
+
+  //partition method right-hand side variational forms
+  varf ff1part(u1,v1) = int2d(Omega1)( f1(tnplustheta)*v1 )
+                         + int2d(Omega1)((1.0/(theta*dt))*u1n*v1)
+                        + int1d(Omega1,3)(1.0*(kappa)*u2nplusthetak*(v1));
+
+  varf ff2part(u2,v2) = int2d(Omega2)( f2(tnplustheta)*v2 )
+			+ int2d(Omega2)((1.0/(theta*dt))*u2n*v2)
+                        + int1d(Omega2,1)(kappa*u1nplusthetak*(v2));
+                    
+
+
+  //allocate the solution and right-hand side vectors
+  real[int] F1(nn), F2(nn);
+        
+  //initial values
+  tn = 0.0;
+  u1n = u1true(0.0);
+  u2n = u2true(0.0);
+  //u1nplustheta0 = u1n;
+  //u2nplustheta0 = u2n;
+  //u1n = 0.0;
+  //u2n = 0.0;
+
+  //plot(u1n,u2n,wait=0,fill=1,value=1,cmm="Initial Value");
+  //keep track of the error at each timestep
+  real[int] errspart(numsteps), errs1part(numsteps), errs2part(numsteps);
+
+  int kmax = 0;
+  real sumk = 0;
+  real avgk = 0;
+
+  //begin timestepping loop
+  for(i=1;i<=numsteps;i++) {
+    
+    //update current time   
+    tnplustheta = tn + theta*dt;    
+    real error1=1;
+    real error2=1;
+			u1nplusthetak = u1n;
+			u2nplusthetak = u2n;
+    for(k=1;(error1>=epsilon || error2>=epsilon);k++){
+      /*  if(k==1){
+		if(theta==1){
+			u1nplusthetak = u1n;
+			u2nplusthetak = u2n;
+		}
+		else if(i==1){
+			u1nplusthetak = u1n;
+			u2nplusthetak = u2n;
+		}
+		else{
+			u1nplusthetak = u1nminusthetam1 + 1.0/(1.0-theta)*(u1n-u1nminusthetam1);
+			u1nplusthetak = u2nminusthetam1 + 1.0/(1.0-theta)*(u2n-u2nminusthetam1);
+		}
+	}*/
+    //Partition STEP
+    //assemble matrix and rhs blocks
+    //construct the diagonal blocks
+    matrix A11part = a11part(X1,X1);
+    matrix A22part = a22part(X2,X2); 
+    //compute the rhs vectors
+    F1 = ff1part(0,X1);
+    F2 = ff2part(0,X2);
+    //solve the problem
+    set(A11part, solver=UMFPACK);  
+    set(A22part, solver=UMFPACK);
+    //solve the problem
+    cpu = clock();  
+    u1nplusthetakp1[] = A11part^-1*F1;
+    u2nplusthetakp1[] = A22part^-1*F2;
+    //error1 = sqrt(int2d(Omega1)(u1nplusthetakp1-u1nplusthetak)^2);
+    //error2 = sqrt(int2d(Omega2)(u2nplusthetakp1-u2nplusthetak)^2);
+    
+
+    error1 = sqrt(int2d(Omega1)((u1nplusthetakp1-u1nplusthetak)^2+ nu1*theta*dt*((dx(u1nplusthetakp1)-dx(u1nplusthetak))^2+(dy(u1nplusthetakp1)-dy(u1nplusthetak))^2)));
+    error2 = sqrt(int2d(Omega2)((u2nplusthetakp1-u2nplusthetak)^2+ nu2*theta*dt*((dx(u2nplusthetakp1)-dx(u2nplusthetak))^2+(dy(u2nplusthetakp1)-dy(u2nplusthetak))^2)));
+
+
+    u1nplusthetak = u1nplusthetakp1;
+    u2nplusthetak = u2nplusthetakp1;
+    
+    
+    if (k>kmax){
+        kmax = k;
+    }
+    sumk += 1; 
+}  
+
+
+    u1nplustheta = u1nplusthetakp1;
+    u2nplustheta = u2nplusthetakp1;
+    
+
+
+
+    u1nplus1[]=(1/theta)*u1nplustheta[]-((1-theta)/theta)*u1n[];
+    u2nplus1[]=(1/theta)*u2nplustheta[]-((1-theta)/theta)*u2n[];
+    solvetimepart = solvetimepart + clock() - cpu;
+    //update the old solution values
+    u1nminusthetam1 = u1nplustheta;
+    u2nminusthetam1 = u2nplustheta;
+    u1n = u1nplus1;
+    u2n = u2nplus1;
+    //end Partition STEP   
+
+
+    
+    cout << "Problem solved at time tnplus1 = " << tnplus1 << endl;
+    tnplus1 = tnplustheta + (1-theta)*dt;
+    tn = tnplus1;
+        
+    //capture error at this timestep
+
+    //compute  errors for partition method
+    real u1L2 = sqrt(int2d(Omega1)(u1true(tn)-u1n)^2);
+    real u2L2 = sqrt(int2d(Omega2)(u2true(tn)-u2n)^2);
+    real uL2 = sqrt(u1L2^2+u2L2^2);
+    real u1H1 = sqrt(int2d(Omega1)((u1truex(tn)-dx(u1n))^2 + (u1truey(tn)-dy(u1n))^2));
+    real u2H1 = sqrt(int2d(Omega2)((u2truex(tn)-dx(u2n))^2 + (u2truey(tn)-dy(u2n))^2));
+    real uH1 = sqrt(u1H1^2+u2H1^2);
+    
+    errspart(i-1) = uH1;
+    errs1part(i-1) = u1H1;
+    errs2part(i-1) = u2H1;
+
+
+   
+    
+  }//end timestepping loop
+   
+  avgk = sumk/numsteps;
+
+
+  //compute total errors
+  uep[j] = sqrt(dt)*errspart.l2;
+  u1ep[j] = sqrt(dt)*errs1part.l2;
+  u2ep[j] = sqrt(dt)*errs2part.l2;
+
+
+  //compute convergence rates
+  if(j>0) {
+    urp[j-1] = log(uep[j]/uep[j-1])/log(0.5);
+    u1rp[j-1] = log(u1ep[j]/u1ep[j-1])/log(0.5);
+    u2rp[j-1] = log(u2ep[j]/u2ep[j-1])/log(0.5);
+  }  
+          
+  //plot(u1nplus1,u2nplus1,wait=1,fill=1, value=1,cmm="Computed Approximation");
+  //plot3d(u1nplus1,u2nplus1,wait=0,fill=1, value=1,cmm="Computed Approximation");
+  u1temp = u1true(tn);
+  u2temp = u2true(tn);
+ //plot(u1temp,u2temp,wait=1,fill=1, value=1,cmm="True Solution");
+ cout << " For n = "<< n<<" the sum is "<<sumk<<" the average k is "<<avgk<<" and the max k is "<<kmax<<endl; 
+
+}//end mesh/timestep refinement loop
+
+cout << "Partition Method Statistics" << endl;
+cout << "            u                     u1                    u2       " << endl; 
+cout << "L^2-H^1      rate     L^2-H^1      rate     L^2-H^1      rate" << endl; 
+int jj;
+cout.precision(6);
+for(jj=0;jj<m;jj++) {
+  if(jj> 0) {
+    cout << uep[jj] << " & "  << urp[jj-1] << " & " 
+         << u1ep[jj] << " & "  << u1rp[jj-1] << " & "
+         << u2ep[jj] << " & "  << u2rp[jj-1] << " \\ " << endl; 
+  } else {
+    cout << uep[jj] << " & "  << "         & "  
+         << u1ep[jj] << " & "  << "         & "  
+         << u2ep[jj] << " & "  << "         \\ " << endl; 
+  }
+}
+
+cout << "Partition solver time: " << solvetimepart << endl;
+
+//write all the above to a file
+string fname = "output.txt";
+ofstream cout1(fname);
+
+cout1 << "Partition Method Statistics" << endl;
+cout1 << "            u                     u1                    u2       " << endl; 
+cout1 << "L^2-H^1      rate     L^2-H^1      rate     L^2-H^1      rate" << endl; 
+cout1.precision(6);
+for(jj=0;jj<m;jj++) {
+  if(jj> 0) {
+    cout1 << uep[jj] << " & "  << urp[jj-1] << " & " 
+         << u1ep[jj] << " & "  << u1rp[jj-1] << " & "
+         << u2ep[jj] << " & "  << u2rp[jj-1] << " \\ " << endl; 
+  } else {
+    cout1 << uep[jj] << " & "  << "         & "  
+         << u1ep[jj] << " & "  << "         & "  
+         << u2ep[jj] << " & "  << "         \\ " << endl; 
+  }
+}
+
+cout1 << "Partition solver time: " << solvetimepart << endl;
+
