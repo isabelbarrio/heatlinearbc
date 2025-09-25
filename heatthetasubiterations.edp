@@ -1,6 +1,6 @@
 real theta = 1.0/2.0;
 //number of refinements
-int m=4, j;
+int m=6, j;
 load "Element_P3"
 load "Element_P4"
 
@@ -18,7 +18,7 @@ real y0 = 0.0, y1 = 1.0, y2 = -1.0;
 //heat eqn parameters
 real nu1 = 1.0;
 real nu2 = 1.0;
-real kappa = 1000.0;
+real kappa = 0.00001;
 real a = 1.0;
 real c1 = 1.0+nu1/kappa;
 real c2 = -1.0*nu1/nu2;
@@ -152,13 +152,14 @@ for(j=0;j<m;j++){
     cpu = clock();  
     u1nplusthetakp1[] = A11part^-1*F1;
     u2nplusthetakp1[] = A22part^-1*F2;
-    //error1 = sqrt(int2d(Omega1)(u1nplusthetakp1-u1nplusthetak)^2);
-    //error2 = sqrt(int2d(Omega2)(u2nplusthetakp1-u2nplusthetak)^2);
+    error1 = sqrt(int2d(Omega1)(u1nplusthetakp1-u1nplusthetak)^2);
+    error2 = sqrt(int2d(Omega2)(u2nplusthetakp1-u2nplusthetak)^2);
     
 
-    error1 = sqrt(int2d(Omega1)((u1nplusthetakp1-u1nplusthetak)^2+ nu1*theta*dt*((dx(u1nplusthetakp1)-dx(u1nplusthetak))^2+(dy(u1nplusthetakp1)-dy(u1nplusthetak))^2)));
-    error2 = sqrt(int2d(Omega2)((u2nplusthetakp1-u2nplusthetak)^2+ nu2*theta*dt*((dx(u2nplusthetakp1)-dx(u2nplusthetak))^2+(dy(u2nplusthetakp1)-dy(u2nplusthetak))^2)));
+    //error1 = sqrt(int2d(Omega1)((u1nplusthetakp1-u1nplusthetak)^2+ nu1*theta*dt*((dx(u1nplusthetakp1)-dx(u1nplusthetak))^2+(dy(u1nplusthetakp1)-dy(u1nplusthetak))^2)));
+    //error2 = sqrt(int2d(Omega2)((u2nplusthetakp1-u2nplusthetak)^2+ nu2*theta*dt*((dx(u2nplusthetakp1)-dx(u2nplusthetak))^2+(dy(u2nplusthetakp1)-dy(u2nplusthetak))^2)));
 
+    //error = kappa/2*int2d(Omega1,3)(u1nplusthetakp1-u1nplusthetak)^2 
 
     u1nplusthetak = u1nplusthetakp1;
     u2nplusthetak = u2nplusthetakp1;
